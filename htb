@@ -2,7 +2,6 @@
 
 # htb - Start/stop HTB VPN + microsocks proxy
 # Usage: htb [start|stop|status] [ovpn file]
-# Default ovpn path: ~/htb.ovpn
 
 OVPN_FILE="${2:-$HOME/Documents/VPNs/machines_us-dedivip-3.ovpn}"
 OVPN_PID_FILE="/tmp/htb-openvpn.pid"
@@ -123,7 +122,15 @@ cmd_status() {
     print ""
 }
 
-case "${1:-start}" in
+if [[ -z "$1" ]]; then
+    print "Usage: htb [start|stop|status] [ovpn file]"
+    print "  start  - Start VPN + SOCKS5 proxy (default)"
+    print "  stop   - Stop both"
+    print "  status - Show current status"
+    exit 1
+fi
+
+case "$1" in
     start)  cmd_start  ;;
     stop)   cmd_stop   ;;
     status) cmd_status ;;
