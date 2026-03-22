@@ -1,5 +1,4 @@
 #!/usr/bin/env zsh
-
 # htb - Start/stop HTB VPN + microsocks proxy
 # Usage: htb [start|stop|status] [ovpn file]
 
@@ -8,13 +7,7 @@ OVPN_PID_FILE="/tmp/htb-openvpn.pid"
 SOCKS_PID_FILE="/tmp/htb-microsocks.pid"
 SOCKS_PORT=1080
 LOG_FILE="/tmp/htb-vpn.log"
-
-_red='\033[0;31m'
-_green='\033[0;32m'
-_yellow='\033[0;33m'
-_blue='\033[0;34m'
-_bold='\033[1m'
-_reset='\033[0m'
+SOCKS_LOG_FILE="/tmp/htb-microsocks.log"
 
 _info()    { print -P "%F{blue}[*]%f $1" }
 _ok()      { print -P "%F{green}[+]%f $1" }
@@ -33,6 +26,8 @@ _htb_ip() {
 }
 
 cmd_start() {
+    sudo -v || { _err "sudo authentication failed"; return 1 }
+
     if _is_running $OVPN_PID_FILE; then
         _warn "VPN already running (PID $(cat $OVPN_PID_FILE))"
     else
@@ -41,13 +36,12 @@ cmd_start() {
             _err "Usage: htb start [/path/to/file.ovpn]"
             return 1
         fi
-
         _info "Starting OpenVPN..."
         sudo openvpn --config "$OVPN_FILE" \
             --daemon \
+            --writepid "$OVPN_PID_FILE" \
             --log "$LOG_FILE"
 
-        # Wait for tun0 and grab PID after daemon fully forks
         local tries=0
         while ! ip link show tun0 &>/dev/null; do
             sleep 1
@@ -57,8 +51,6 @@ cmd_start() {
                 return 1
             fi
         done
-
-        pgrep -x openvpn | tail -1 > "$OVPN_PID_FILE"
         _ok "VPN up — HTB IP: $(_htb_ip)"
     fi
 
@@ -66,23 +58,23 @@ cmd_start() {
         _warn "microsocks already running (PID $(cat $SOCKS_PID_FILE))"
     else
         _info "Starting microsocks on port $SOCKS_PORT..."
-        microsocks -p $SOCKS_PORT &>/dev/null &
+        microsocks -p $SOCKS_PORT >> "$SOCKS_LOG_FILE" 2>&1 &
         echo $! > $SOCKS_PID_FILE
         sleep 0.5
-
         if _is_running $SOCKS_PID_FILE; then
             _ok "SOCKS5 proxy listening on 127.0.0.1:$SOCKS_PORT"
         else
-            _err "microsocks failed to start"
+            _err "microsocks failed to start — check $SOCKS_LOG_FILE"
             return 1
         fi
     fi
 
     print ""
-    _ok "${_bold}Ready${_reset}"
+    _ok "%Bready%b"
     print "  HTB IP   : $(_htb_ip)"
     print "  SOCKS5   : 127.0.0.1:$SOCKS_PORT"
-    print "  Logs     : $LOG_FILE"
+    print "  VPN log  : $LOG_FILE"
+    print "  Proxy log: $SOCKS_LOG_FILE"
 }
 
 cmd_stop() {
@@ -98,8 +90,17 @@ cmd_stop() {
     if _is_running $OVPN_PID_FILE; then
         _info "Stopping OpenVPN..."
         sudo kill $(cat $OVPN_PID_FILE) 2>/dev/null
-        rm -f $OVPN_PID_FILE
-        sleep 1
+        sudo rm -f $OVPN_PID_FILE
+
+        local tries=0
+        while ip link show tun0 &>/dev/null; do
+            sleep 1
+            (( tries++ ))
+            if (( tries > 10 )); then
+                _warn "tun0 still up after 10s — may need manual cleanup"
+                break
+            fi
+        done
         _ok "VPN stopped"
     else
         _warn "VPN not running"
@@ -113,7 +114,6 @@ cmd_status() {
     else
         _err "VPN      : stopped"
     fi
-
     if _is_running $SOCKS_PID_FILE; then
         _ok "SOCKS5   : running (PID $(cat $SOCKS_PID_FILE)) on port $SOCKS_PORT"
     else
@@ -124,7 +124,7 @@ cmd_status() {
 
 if [[ -z "$1" ]]; then
     print "Usage: htb [start|stop|status] [ovpn file]"
-    print "  start  - Start VPN + SOCKS5 proxy (default)"
+    print "  start  - Start VPN + SOCKS5 proxy"
     print "  stop   - Stop both"
     print "  status - Show current status"
     exit 1
@@ -136,7 +136,7 @@ case "$1" in
     status) cmd_status ;;
     *)
         print "Usage: htb [start|stop|status] [ovpn file]"
-        print "  start  - Start VPN + SOCKS5 proxy (default)"
+        print "  start  - Start VPN + SOCKS5 proxy"
         print "  stop   - Stop both"
         print "  status - Show current status"
         ;;
