@@ -18,7 +18,10 @@ _is_running() {
     local pid_file=$1
     [[ -f $pid_file ]] || return 1
     local pid=$(cat $pid_file)
-    kill -0 $pid 2>/dev/null || sudo kill -0 $pid 2>/dev/null
+    local expected
+    [[ $pid_file == $OVPN_PID_FILE ]]  && expected=openvpn
+    [[ $pid_file == $SOCKS_PID_FILE ]] && expected=microsocks
+    ps -p $pid -o comm= 2>/dev/null | grep -q "$expected"
 }
 
 _htb_ip() {
